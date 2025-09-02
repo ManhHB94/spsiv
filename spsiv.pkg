@@ -1,0 +1,6 @@
+v 1.0
+d spsiv — Create synthetic instrumental varible (SIV) for spatial regression
+d Author: Manh Hoang Ba
+d Version: 1.0 02 Sep 2025
+f spsiv.ado
+f spsiv.sthlp
