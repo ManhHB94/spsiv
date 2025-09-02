@@ -1,0 +1,4 @@
+v 1.0
+d Package index for spsiv
+d Updated: 02 Sep 2025
+p spsiv
