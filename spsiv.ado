@@ -181,7 +181,7 @@ program define spsiv
 	}
 
 	sort `sp_id' `sp_t'
-*/	
+	qui cap xtset
 end
 
 
@@ -228,4 +228,5 @@ program define _eigvecvars
 		st_matrix("`E_m'", `E_vectors')
 	}
 	svmat `E_m', names(E)
+
 end
