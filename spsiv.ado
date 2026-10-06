@@ -10,6 +10,9 @@
 *	Version history
 *		02 Sep 25: 1.0 - first time contribution
 *		22 Oct 25: 1.1 - upspeed and modify results
+*		06 Oct 26: 1.2 - disable "mata clear"
+*					   - correct tempname `p_r' in _eigvecvars
+*					   - allow spmatrix object
 ********************************************************************
 
 cap program drop spsiv
@@ -143,7 +146,7 @@ qui	mata: select_vars("`bf_vars'", `T', `N', `alpha', "E")
 
 	
 *	Display results
-	di _n in ye "Correlation between X and synthetic intrumental variables"
+	di _n in ye "Correlation between X and synthetic intrumental variable"
 
 	local k : word count `bf_vars'
 	local hline = 12*(`k'+1)
@@ -157,19 +160,29 @@ qui	mata: select_vars("`bf_vars'", `T', `N', `alpha', "E")
 		// First line: title "Variables" and varnames
 		di as text "{hline `hline'}"
 *		di ""
-		di _column(1) "Variable (X)" _continue
-		local col = 13
+		di _column(1) "Variable" _continue
+		
+		local col = 15		
+/*		
 		forvalues j = `start'/`end' {
 			local var : word `j' of `bf_vars'
 			di _column(`col') %9s "`var'" _continue
 			local col = `col' + 12
 		}
+*/
+//		ver. 1.2
+		forvalues j = `start'/`end' {
+			local var : word `j' of `bf_vars'
+			di _column(`col') %9s "`= abbrev("`var'", 9)'" _continue
+			local col = `col' + 12
+		}		
+		
 		di ""
 		di as text "{hline `hline'}"
 		
 		// Second line: "Corr(X,SIV)" and correlation coef.
 		di _column(1) "Correlation" _continue
-		local col = 13
+		local col = 15
 		forvalues j = `start'/`end' {
 			local var : word `j' of `bf_vars'
 			di _column(`col') %9.4f in ye corr_`var' _continue
@@ -215,17 +228,26 @@ program define _eigvecvars
 *	Check spmat object
 	qui cap spmat summarize `wmatrix'
 	if _rc > 0 {
-		di as err "{bf:spmat} object {it:`wmatrix'} not found"
-		exit 498
+		qui spmatrix summarize `wmatrix'
+		if _rc > 0 {
+			di as err "{it:`wmatrix'} not found. It must be a {bf:spmat} or {bf:spmatrix} object"
+			exit 498
+		}
 	}
 	
-*	Check square matrix
+/*	Check square matrix
 	if r(b) != r(n) {
-		errprintf("{Matrix {it:`wmatrix'} is not square")
+		errprintf("Matrix {it:`wmatrix'} is not square")
 		exit(498)
 	}
-
-	spmat getmatrix `wmatrix' `w_m'
+*/
+	
+*	Copy weighting matrix to MATA	
+	cap spmat getmatrix `wmatrix' `w_m'
+	if _rc > 0 {
+		cap spmatrix matafromsp `w_m' `sp_id' = `wmatrix' 
+	}
+	
 	mata {
 		
 *	Check symmetric
@@ -238,7 +260,8 @@ program define _eigvecvars
 		`r'=rows(`w_m')
 		`j_r' = J(`r',1,1)
 		`q_r' = I(`r')-`j_r'*`j_r''/`r'
-		`p_r '= `q_r'*`w_m'*`q_r'
+//		`p_r '= `q_r'*`w_m'*`q_r'
+		`p_r'= `q_r'*`w_m'*`q_r'	// ver 1.2
 
 		symeigensystem(`p_r', `E_vectors'=., `E_values'=.)
 		st_matrix("`E_m'", `E_vectors')
@@ -252,7 +275,7 @@ end
 *********************************************************************
 
 mata:
-mata clear
+//	mata clear	// ver. 1.2
 	void select_vars( /*
 */		string scalar bf_vars_str, /*
 */		real scalar T, /*
@@ -314,12 +337,12 @@ mata clear
 				idx_sig = selectindex(p_vals :< alpha)
 			
 				// Number of E_i selected
-//				n_selected = length(idx_sig)
+				n_selected = length(idx_sig)
 				
 				// Collect E_i
 				if (length(idx_sig) > 0) {
 					E_sig = E_prefix :+ strofreal(idx_sig')		
-//					Vit = invtokens(E_sig')
+					Vit = invtokens(E_sig')
 				} 
 			
 				// OLS in MATA
@@ -331,10 +354,10 @@ mata clear
 				if (length(idx_sig) > 0) {
 					X_reg = st_data(., E_sig')
 					X_reg = (J(n_obs, 1, 1), X_reg)
-//					n_cols = cols(X_reg)
+					n_cols = cols(X_reg)
 				} else {
 					X_reg = J(n_obs, 1, 1)
-//					n_cols = 1
+					n_cols = 1
 				}
 				
 				beta = invsym(X_reg' * X_reg) * X_reg' * y
@@ -363,5 +386,3 @@ mata clear
 		
 	}
 end
-
-// Gọi hàm từ Stata

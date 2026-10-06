@@ -1,13 +1,13 @@
 {smcl}
 
-help for {hi:spsiv}			Version 1.1, 22 Oct 25
+help for {helpb spsiv}{right:Manh Hoang-Ba (hbmanh9492@gmail, {browse "https://www.youtube.com/@manhb.econometrics":Youtube}, {browse "https://www.facebook.com/ManhHB94/":Facebook}, {browse "https://manhb94econometrics.wordpress.com":Website})}
 
 {title:{cmd:spsiv} - Create synthetic instrumental variables in spatial regression}
 
 
 {title:Syntax}
 
-{p 8 16 2} {cmd:spsiv} {varlist} {ifin} {cmd:,} {cmdab:m:mat(matname)} [{cmdab:a:lpha(#)}]
+{p 8 16 2} {cmd:spsiv} {varlist} {ifin} {cmd:,} {cmdab:m:mat(}{it:matname}{cmd:)} [{cmdab:a:lpha(}#{cmd:)}]
 
 
 {title:Description}
@@ -18,19 +18,24 @@ help for {hi:spsiv}			Version 1.1, 22 Oct 25
 
 {p 4 8 2}The latest version of {cmd:spsiv} can be found at the following link: {browse "https://github.com/ManhHB94/":https://github.com/ManhHB94/}{p_end}
 
+{pstd}To update the {helpb spsiv} package to the latest version, run either of the following commands{p_end}
+{phang2}. {stata `"ado update spsiv, update"'}{p_end}
+{phang2}. {stata `"ssc install spsiv, replace"'}{p_end}
+{phang2}. {stata `"net install spsiv, from("https://raw.githubusercontent.com/ManhHB94/spsiv/main/") replace"'}{p_end}
 
 {title:Options}
 
-{p 4 8 2}*{cmdab:m:mat(matname)} specifies a symmetric connectivity matrix, which can be an adjacency matrix or based on some other distance measure. It is important that they are symmetric, so a convenient option is to use an unnormalized matrix. This option is required.
+{p 4 8 2}*{cmdab:m:mat(}{it:matname}{cmd:)} specifies a symmetric connectivity matrix stored as a {helpb spmat} or {helpb spmatrix} object. The matrix can be an adjacency matrix or be based on another distance measure. 
+The matrix should be symmetric. An unnormalized connectivity matrix is therefore recommended. This option is required.
 
-{p 4 8 2}{cmdab:a:lpha(#)} specifies the significance level used in the spatial filter generation process. The default value is 0.05.
+{p 4 8 2}{cmdab:a:lpha(}#{cmd:)} specifies the significance level used in the spatial filter generation process. The default value is 0.05.
 
 
 {title:Citation}
 
 {p 4 8 2}{cmd:spsiv} is not an official Stata command. It is a free contribution to the research community. Please cite it as such: {p_end}
-{p 8 8 2}Manh Hoang Ba, 2025. "SPSIV: Create synthetic instrumental variables in spatial regression," Statistical Software Components, Boston College Department of Economics.{p_end}
 
+{p 8 8 2}Manh Hoang Ba, 2026. SPSIV: Create synthetic instrumental variables in spatial regression.{browse "https://ideas.repec.org/c/boc/bocode/s459511.html":https://ideas.repec.org/c/boc/bocode/s459511.html}{p_end}
 
 {marker example}{...}
 {title:Examples}
@@ -42,6 +47,8 @@ help for {hi:spsiv}			Version 1.1, 22 Oct 25
 {phang2} {stata spset }{p_end}
 {phang2} {stata spmat idistance m _CX _CY, id(_ID) dfunction(dhaversine) replace }{p_end}
 {phang2} {stata spsiv ln_population ln_pdensity gini, m(m) a(0.1) }{p_end}
+{phang2} {stata spmatrix create idistance w , replace }{p_end}
+{phang2} {stata spsiv ln_population ln_pdensity gini, m(w) a(0.1) }{p_end}
 
 {pstd}* Panel data{p_end}
 {phang2} {stata "copy https://www.stata-press.com/data/r19/homicide_1960_1990.dta ., replace"}{p_end}
@@ -52,15 +59,16 @@ help for {hi:spsiv}			Version 1.1, 22 Oct 25
 {phang2} {stata preserve }{p_end}
 {phang2} {stata keep if year==1990 }{p_end}
 {phang2} {stata spmat idistance m _CX _CY, id(_ID) dfunction(dhaversine) replace }{p_end}
+{phang2} {stata spmatrix create idistance w , replace }{p_end}
 {phang2} {stata restore }{p_end}
 {phang2} {stata spsiv ln_population ln_pdensity gini if year==1990, m(m) a(0.1) }{p_end}
-
+{phang2} {stata spsiv ln_population ln_pdensity gini if year==1990, m(w) a(0.1) }{p_end}
 	
 {title:References}
 
-{pstd}Fingleton, B. (2023). Estimating dynamic spatial panel data models with endogenous regressors using synthetic instruments. Journal of Geographical Systems, 25(1), 121-152.
+{pstd}Fingleton, B. (2023). Estimating dynamic spatial panel data models with endogenous regressors using synthetic instruments. {it:Journal of Geographical Systems}, 25(1), 121-152.
 
-{pstd}Le Gallo, J., & Paez, A. (2013). Using synthetic variables in instrumental variable estimation of spatial series models. Environment and Planning A, 45(9), 2227-2242.
+{pstd}Le Gallo, J., & Paez, A. (2013). Using synthetic variables in instrumental variable estimation of spatial series models. {it:Environment and Planning A}, 45(9), 2227-2242.
 
 
 {title:Authors}
