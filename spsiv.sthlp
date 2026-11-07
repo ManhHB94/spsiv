@@ -45,9 +45,9 @@ The matrix should be symmetric. An unnormalized connectivity matrix is therefore
 {phang2} {stata "copy https://www.stata-press.com/data/r19/homicide1990_shp.dta ., replace"}{p_end}
 {phang2} {stata use homicide1990, clear }{p_end}
 {phang2} {stata spset }{p_end}
-{phang2} {stata spmat idistance m _CX _CY, id(_ID) dfunction(dhaversine) replace }{p_end}
+{phang2} {stata spmat idistance m _CX _CY, id(_ID) dfunction(euclidean) replace }{p_end}
 {phang2} {stata spsiv ln_population ln_pdensity gini, m(m) a(0.1) }{p_end}
-{phang2} {stata spmatrix create idistance w , replace }{p_end}
+{phang2} {stata spmatrix create idistance w, replace normalize(none) }{p_end}
 {phang2} {stata spsiv ln_population ln_pdensity gini, m(w) a(0.1) }{p_end}
 
 {pstd}* Panel data{p_end}
@@ -58,11 +58,14 @@ The matrix should be symmetric. An unnormalized connectivity matrix is therefore
 {phang2} {stata spset }{p_end}
 {phang2} {stata preserve }{p_end}
 {phang2} {stata keep if year==1990 }{p_end}
-{phang2} {stata spmat idistance m _CX _CY, id(_ID) dfunction(dhaversine) replace }{p_end}
-{phang2} {stata spmatrix create idistance w , replace }{p_end}
+{phang2} {stata spmat idistance m _CX _CY, id(_ID) dfunction(euclidean) replace }{p_end}
+{phang2} {stata spmatrix create idistance w, replace normalize(none) }{p_end}
 {phang2} {stata restore }{p_end}
 {phang2} {stata spsiv ln_population ln_pdensity gini if year==1990, m(m) a(0.1) }{p_end}
 {phang2} {stata spsiv ln_population ln_pdensity gini if year==1990, m(w) a(0.1) }{p_end}
+{phang2} {stata spsiv ln_population ln_pdensity gini , m(m) a(0.1) }{p_end}
+{phang2} {stata spsiv ln_population ln_pdensity gini , m(w) a(0.1) }{p_end}
+
 	
 {title:References}
 
