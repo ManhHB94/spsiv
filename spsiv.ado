@@ -4,7 +4,7 @@
 *					-----------
 *	According to Le Gallo & Paez (2013) and Fingleton (2022)
 *					-----------
-*	Version 1.1		Manh Hoang Ba (hbmanh9492@gmail.com)
+*	Version 1.3		Manh Hoang Ba (hbmanh9492@gmail.com)
 *					
 ********************************************************************
 *	Version history
@@ -13,22 +13,29 @@
 *		06 Oct 26: 1.2 - disable "mata clear"
 *					   - correct tempname `p_r' in _eigvecvars
 *					   - allow spmatrix object
+*		07 Nov 26: 1.3 - upspeed:
+*					     . no reshape/save/merge: panel is arranged
+*					       as N x T matrix directly in Mata
+*					     . eigenvectors kept in Mata (no svmat, no
+*					       matsize limit, no E* variables)
+*					     . correlations with all E_i in one matrix
+*					       product; critical |r| replaces p-values
+*					     . double-centering instead of QWQ products
+*					   - if/in are marked together with varlist (marksample)
+*					     and with the id/time variables
+*					   - free Mata objects after use
 ********************************************************************
 
 cap program drop spsiv
 program define spsiv
 	version 11.1	// According to spmat.ado
 	
-	syntax varlist(min=1) [if] [in] , Mmat(name) [Alpha(real 0.05)]
-	
-	preserve
+	syntax varlist(min=1 numeric) [if] [in] , Mmat(name) [Alpha(real 0.05)]
 
-*	mark sample	
-	tempvar touse
-	mark `touse' `if' `in'
-	
-	tempfile raw_data siv_data
-	tempvar sp_id sp_t id_t
+	if `alpha'<=0 | `alpha'>=1 {
+		di in red "{bf:alpha()} must be between 0 and 1"
+		exit 198
+	}
 
 *	Remove duplicate variables from varlist
 	local varlist : list uniq varlist
@@ -62,84 +69,46 @@ program define spsiv
 		}
 	}
 *
-*	Get sp_id, time_id
 	local sp_id_var `r(sp_id_var)'
-	qui egen `sp_id' = group(`sp_id_var') if `touse'	// sp_id = 1 to N
-	sort `sp_id' `tvar'
-	qui by `sp_id': gen `sp_t' = _n if `touse'			// sp_t  = 1 to T
-	qui egen `id_t' = group(`sp_id_var' `tvar')
 
-*	Get N, T
-	qui sum `sp_t' if `touse'
-	local T = r(max)
-	qui sum `sp_id' if `touse'
-	local N = r(max)
+*	Mark sample: if/in, non-missing varlist, non-missing id and time
+	marksample touse
+	markout `touse' `sp_id_var' `tvar'
+	qui count if `touse'
+	if r(N)==0 error 2000
 
-*	Save data
-	sort `id_t'
-	qui save `raw_data', replace
-	
-*	Reshape wide data
-	qui keep if `touse'
-	qui keep `id_t' `sp_id' `sp_t' `varlist'
-	qui ds `id_t' `sp_id' `sp_t', not
-	local bf_vars `r(varlist)'
-	qui reshape wide `id_t' `bf_vars', i(`sp_id') j(`sp_t')
-		
-*	Calculate eigenvectors Ei
-	qui _eigvecvars, w(`mmat')
-
-*	Calculate Synthetic instrument for varlist
-//	local siv_vars
-
-*	MATA:
-qui	mata: select_vars("`bf_vars'", `T', `N', `alpha', "E")
-	
-*	STATA
-/*	
-	qui foreach name in `bf_vars' {
-		forvalues t=1/`T' {
-			
-			local Vit
-			forvalues i=1/`N' {
-				tempvar V`t'`i'
-			}			
-			tempname p
-		
-			forvalues i=1/`N' {					
-				qui reg `name'`t' E`i'
-				scalar `p' = 1-F(e(df_m), e(df_r),e(F))
-				if `p' < `alpha' {
-					qui gen double `V`t'`i'' =  _b[E`i']*E`i'
-					local Vit `Vit' `V`t'`i''
-				}
-			}		
-			qui reg `name'`t' `Vit'
-			scalar noE_`name' = e(df_m)
-			qui predict double siv_`name'`t'
-		}
-		local siv_vars `siv_vars' siv_`name'
+*	Temporary variables to hold the synthetic instruments
+	local k : word count `varlist'
+	local siv_tmp
+	forvalues j = 1/`k' {
+		tempvar s`j'
+		local siv_tmp `siv_tmp' `s`j''
 	}
-*/
 
-	qui drop E*
-
-*	Reshape long data
-	qui reshape long `id_t' `bf_vars' `siv_vars' , i(`sp_id') j(`sp_t')
-	qui drop `bf_vars'
-	sort `id_t'
-	qui save `siv_data', replace
-
-*	Merge data
-	restore
-	use `raw_data', clear
-	foreach name in `siv_vars' {
-		qui cap confirm v `name'
-		if _rc==0 qui drop `name'
+*	Calculate eigenvectors E (kept in MATA)
+	tempname Emat
+	cap noi _eigvecvars, w(`mmat') emat(`Emat')
+	if _rc {
+		local rc = _rc
+		cap mata: mata drop `Emat'
+		exit `rc'
 	}
-	
-	qui merge 1:1 `id_t' using `siv_data', nogen
-	foreach name in `bf_vars' {
+
+*	Calculate Synthetic instrument for varlist (MATA)
+	cap noi mata: _spsiv_core(`Emat', "`varlist'", "`siv_tmp'", ///
+		"`touse'", "`sp_id_var'", "`tvar'", `alpha')
+	local rc = _rc
+	cap mata: mata drop `Emat'
+	if `rc' exit `rc'
+
+*	Name the new variables and calculate correlations
+	local j = 0
+	foreach name of local varlist {
+		local ++j
+		local s : word `j' of `siv_tmp'
+		qui cap confirm v siv_`name'
+		if _rc==0 qui drop siv_`name'
+		rename `s' siv_`name'
 		qui corr `name' siv_`name' if `touse'
 		scalar corr_`name' = r(rho)
 	}
@@ -148,7 +117,7 @@ qui	mata: select_vars("`bf_vars'", `T', `N', `alpha', "E")
 *	Display results
 	di _n in ye "Correlation between X and synthetic intrumental variable"
 
-	local k : word count `bf_vars'
+	local k : word count `varlist'
 	local hline = 12*(`k'+1)
 
 	// Loop through first 6 variables
@@ -159,20 +128,11 @@ qui	mata: select_vars("`bf_vars'", `T', `N', `alpha', "E")
 		
 		// First line: title "Variables" and varnames
 		di as text "{hline `hline'}"
-*		di ""
 		di _column(1) "Variable" _continue
 		
 		local col = 15		
-/*		
 		forvalues j = `start'/`end' {
-			local var : word `j' of `bf_vars'
-			di _column(`col') %9s "`var'" _continue
-			local col = `col' + 12
-		}
-*/
-//		ver. 1.2
-		forvalues j = `start'/`end' {
-			local var : word `j' of `bf_vars'
+			local var : word `j' of `varlist'
 			di _column(`col') %9s "`= abbrev("`var'", 9)'" _continue
 			local col = `col' + 12
 		}		
@@ -184,23 +144,11 @@ qui	mata: select_vars("`bf_vars'", `T', `N', `alpha', "E")
 		di _column(1) "Correlation" _continue
 		local col = 15
 		forvalues j = `start'/`end' {
-			local var : word `j' of `bf_vars'
+			local var : word `j' of `varlist'
 			di _column(`col') %9.4f in ye corr_`var' _continue
 			local col = `col' + 12
 		}
 		di ""
-
-/*		version 1.1 - display number of Eigenvectors		
-		// Third line: "Eigvectors" and number of eigenvectors
-		di _column(1) as text "Eig. vector" _continue
-		local col = 13
-		forvalues j = `start'/`end' {
-			local var : word `j' of `bf_vars' 
-			di _column(`col') %9.0g in ye noE_`var' _continue
-			local col = `col' + 12
-		}
-		di ""
-*/		
 		di as text "{hline `hline'}"
 		
 		// If not the last group, print a blank line to space the next table.
@@ -208,181 +156,181 @@ qui	mata: select_vars("`bf_vars'", `T', `N', `alpha', "E")
 			di ""
 		}
 	}
-
-	sort `sp_id' `sp_t'
-	qui cap xtset	
 end
 
 
 *********************************************************************
 *	Program calculate Eigenvectors variables
 *		from a Symmetric Adjacency matrix
+*		(result is a MATA matrix named in emat())
 *********************************************************************
 cap program drop _eigvecvars	
 program define _eigvecvars
 	version 11.1
-	syntax , Wmatrix(name)
+	syntax , Wmatrix(name) Emat(name)
 
-	tempname w_m E_m E_vectors E_values r j_r q_r p_r
+	tempname w_m idv
 	
 *	Check spmat object
 	qui cap spmat summarize `wmatrix'
 	if _rc > 0 {
-		qui spmatrix summarize `wmatrix'
+		qui cap spmatrix summarize `wmatrix'
 		if _rc > 0 {
 			di as err "{it:`wmatrix'} not found. It must be a {bf:spmat} or {bf:spmatrix} object"
 			exit 498
 		}
 	}
 	
-/*	Check square matrix
-	if r(b) != r(n) {
-		errprintf("Matrix {it:`wmatrix'} is not square")
-		exit(498)
-	}
-*/
-	
 *	Copy weighting matrix to MATA	
 	cap spmat getmatrix `wmatrix' `w_m'
 	if _rc > 0 {
-		cap spmatrix matafromsp `w_m' `sp_id' = `wmatrix' 
+		cap spmatrix matafromsp `w_m' `idv' = `wmatrix' 
+		if _rc > 0 {
+			di as err "cannot copy {it:`wmatrix'} to Mata"
+			exit 498
+		}
 	}
 	
-	mata {
-		
-*	Check symmetric
-		if (!issymmetric(`w_m')) {
-			errprintf("Matrix {it:`wmatrix'} must be symmetrical")
-			exit(498)
-		}
-
-*	Projection matrix: P = (I-1*1'/N)M(I-1*1'/N)
-		`r'=rows(`w_m')
-		`j_r' = J(`r',1,1)
-		`q_r' = I(`r')-`j_r'*`j_r''/`r'
-//		`p_r '= `q_r'*`w_m'*`q_r'
-		`p_r'= `q_r'*`w_m'*`q_r'	// ver 1.2
-
-		symeigensystem(`p_r', `E_vectors'=., `E_values'=.)
-		st_matrix("`E_m'", `E_vectors')
-	}
-	svmat `E_m', names(E)
+*	Eigenvectors of P = (I-11'/N)W(I-11'/N)
+	cap noi mata: `emat' = _spsiv_E(`w_m')
+	local rc = _rc
+	cap mata: mata drop `w_m'
+	cap mata: mata drop `idv'
+	if `rc' exit `rc'
 end
 
 
 *********************************************************************
-*	Program define seclect_vars() in MATA
+*	MATA functions
 *********************************************************************
 
 mata:
-//	mata clear	// ver. 1.2
-	void select_vars( /*
-*/		string scalar bf_vars_str, /*
-*/		real scalar T, /*
-*/		real scalar N, /*
-*/		real scalar alpha, /*
-*/		string scalar E_prefix /*
+
+//	Eigenvectors of the double-centered symmetric matrix W
+	real matrix _spsiv_E(real matrix W)
+	{
+		cm = mean(W)				// 1 x r column means
+		if (rows(W) != cols(W)) {
+			errprintf("Weighting matrix must be square\n")
+			exit(498)
+		}
+		if (!issymmetric(W)) {
+			errprintf("Weighting matrix must be symmetrical\n")
+			exit(498)
+		}
+		gm = mean(cm')				// grand mean
+
+		// (I-11'/r) W (I-11'/r) = W - cm - cm' + gm  when W is symmetric
+		N = rows(W)
+		P = W :- J(N, 1, 1)*cm :- cm'*J(1, N, 1) :+ gm
+		
+		symeigensystem(P, V=., L=.)
+		return(V)
+	}
+
+//	Rank of each value among the distinct sorted values (1,2,...)
+	real colvector _spsiv_rank(real colvector v)
+	{
+		o = order(v, 1)
+		s = v[o]
+		q = (. \ s)
+		q = q[|1 \ rows(s)|]
+		g = runningsum(s :!= q)
+		r = J(rows(v), 1, .)
+		r[o] = g
+		return(r)
+	}
+
+//	Synthetic instruments for balanced panel data
+	void _spsiv_core( /*
+*/		real matrix E, /*
+*/		string scalar vars_str, /*
+*/		string scalar outs_str, /*
+*/		string scalar touse, /*
+*/		string scalar idvar, /*
+*/		string scalar tvar, /*
+*/		real scalar alpha /*
 */	) {
+		vars = tokens(vars_str)
+		outs = tokens(outs_str)
+		k = cols(vars)
 		
-		bf_vars = tokens(bf_vars_str)
-		n_vars = length(bf_vars)
-		n_obs = st_nobs()
+		// Position of each selected observation in the N x T layout
+		id = st_data(., idvar, touse)
+		if (tvar == "") tm = J(rows(id), 1, 1)
+		else            tm = st_data(., tvar, touse)
 		
-		// Get data Ei
-		E_varnames = J(1, N, "")
-		for (i = 1; i <= N; i++) {
-			E_varnames[i] = E_prefix + strofreal(i)
+		M  = rows(id)
+		iu = _spsiv_rank(id)
+		it = _spsiv_rank(tm)
+		N  = max(iu)
+		T  = max(it)
+		
+		if (M != N*T) {
+			errprintf("panel must be balanced in the estimation sample\n")
+			exit(498)
 		}
-		E_data = st_data(., E_varnames)
+		p = (iu :- 1) :* T :+ it
+		chk = J(N*T, 1, 0)
+		chk[p] = J(M, 1, 1)
+		if (sum(chk) != N*T) {
+			errprintf("panel must be balanced in the estimation sample\n")
+			exit(498)
+		}
+		if (rows(E) != N) {
+			errprintf("number of spatial units in the sample (%g) differs from the dimension of the weighting matrix (%g)\n", N, rows(E))
+			exit(498)
+		}
+		if (N < 3) {
+			errprintf("at least 3 spatial units are required\n")
+			exit(498)
+		}
 		
-		// Make siv_vars
-		siv_vars_list = ""
-
-		for (v = 1; v <= n_vars; v++) {
-			name = bf_vars[v]
+		// Critical value of |r| equivalent to p-value < alpha of the slope
+		df    = N - 2
+		tc    = invttail(df, alpha/2)
+		rcrit = tc / sqrt(df + tc^2)
+		
+		// Centered and standardized eigenvectors (computed once)
+		Ec = E :- mean(E)
+		nE = sqrt(colsum(Ec:^2))
+		ok = nE :> 1e-8
+		Zc = Ec :* (ok :/ (nE :+ !ok))
+		
+		Xall = st_data(., vars, touse)
+		
+		for (v = 1; v <= k; v++) {
 			
-			// Get data for all t
-			varnames_t = J(1, T, "")
+			// Arrange variable v as N x T
+			xv = J(N*T, 1, .)
+			xv[p] = Xall[., v]
+			X  = colshape(xv, T)
+			
+			xm  = mean(X)
+			Xc  = X :- xm
+			nx  = sqrt(colsum(Xc:^2))
+			okx = (colmax(X) :> colmin(X)) :& (nx :> 0)
+			Zx  = Xc :* (okx :/ (nx :+ !okx))
+			
+			// Correlations of every x_t with every E_i (T x N)
+			R = cross(Zx, Zc)
+			
+			S = J(N, T, .)
 			for (t = 1; t <= T; t++) {
-				varnames_t[t] = name + strofreal(t)
-			}
-			X_all = st_data(., varnames_t)
-			
-//			n_selected = 0
-			
-			siv_name = "siv_" + name
-			
-			for (t = 1; t <= T; t++) {
-				x = X_all[., t]
-				
-				// Mean and Std
-				mean_x = mean(x)
-				sd_x = sqrt(diag(variance(x)))
-				x_centered = x :- mean_x
-
-				E_means = colsum(E_data) / n_obs
-				E_sds = sqrt(diag(colsum((E_data :- E_means):^2) / (n_obs-1)))
-				
-				// Vectorized correlation calculation
-				E_centered = E_data :- E_means
-				corr_vec = (x_centered' * E_centered) * invsym(sd_x) * invsym(E_sds) / (n_obs-1) 
-				corr_vec = corr_vec[1, .] 
-				
-				// Vectorized p-value calculation
-				t_stats = corr_vec :* sqrt(n_obs - 2) :/ sqrt(1 :- corr_vec:^2 :+ 1e-10)
-//				p_vals = 2 :* (1 :- normal(abs(t_stats)))
-				p_vals = 2 :* (1 :- t(n_obs - 2, abs(t_stats)))
-				
-				// Mark index with p-value < alpha
-				idx_sig = selectindex(p_vals :< alpha)
-			
-				// Number of E_i selected
-				n_selected = length(idx_sig)
-				
-				// Collect E_i
-				if (length(idx_sig) > 0) {
-					E_sig = E_prefix :+ strofreal(idx_sig')		
-					Vit = invtokens(E_sig')
-				} 
-			
-				// OLS in MATA
-				varname_t = name + strofreal(t)
-				siv_namet = "siv_" + varname_t
-				
-				y = st_data(., varname_t)
-				
-				if (length(idx_sig) > 0) {
-					X_reg = st_data(., E_sig')
-					X_reg = (J(n_obs, 1, 1), X_reg)
-					n_cols = cols(X_reg)
-				} else {
-					X_reg = J(n_obs, 1, 1)
-					n_cols = 1
+				idx = selectindex(abs(R[t, .]) :> rcrit)
+				if (length(idx) == 0) {
+					S[., t] = J(N, 1, xm[t])
 				}
-				
-				beta = invsym(X_reg' * X_reg) * X_reg' * y
-				yhat = X_reg * beta
-				
-				// Store to Stata		
-				st_addvar("double", siv_namet)				
-				st_store(., siv_namet, yhat)
-				
-				// Lưu hệ số tự do (bậc tự do = số biến ngoài constant)
-//				n_selected = n_cols - 1				
+				else {
+					Zs = Ec[., idx]
+					S[., t] = xm[t] :+ Zs * (invsym(cross(Zs, Zs)) * cross(Zs, Xc[., t]))
+				}
 			}
 			
-//			st_numscalar("noE_" + name, n_selected)
-			
-			// Add to siv_vars
-			if (siv_vars_list == "") {
-				siv_vars_list = siv_name
-			} else {
-				siv_vars_list = siv_vars_list + " " + siv_name
-			}			
+			// Store to Stata (same observation order as st_data)
+			sv = rowshape(S, 1)'
+			j  = st_addvar("double", outs[v])
+			st_store(., j, touse, sv[p])
 		}
-		
-		// Return local siv_vars to Stata
-		st_local("siv_vars", siv_vars_list) 
-		
 	}
 end
